@@ -1,0 +1,210 @@
+---
+title: "Untitled"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Librerias
+```{r}
+library(psych)
+library(dplyr)
+library(stringr)
+library(datasets)
+library(tidyverse)
+library(tm)
+library(tidytext)
+library(quanteda)
+library(quanteda.textstats)
+library(ggplot2)
+library(wordcloud)
+library(ggplot.multistats)
+library(factoextra)
+library(tibble)
+library(flexclust)
+library(cluster)
+```
+
+#cargando datoss
+```{r}
+setwd("C:/Users/Dieca/OneDrive/Escritorio/proyecto 1")
+
+sanguchez <- read.csv("sanguchezz.csv", sep = ";")
+
+sanguchez <- sanguchez
+
+sanguchez <- sanguchez[,!(colnames(sanguchez) %in% c("url", "Direccion", "texto", "Ingredientes", "Local"))] 
+
+ordenar_NOTAS <- sanguchez[order(sanguchez$nota,decreasing = TRUE),]
+```
+
+
+## funcion que pasa las notas a valor numerico
+```{r}
+sanguchez$Precio <- as.numeric(gsub('[$.aprox]', '', sanguchez$Precio))
+```
+
+## Borramos los datos NA
+
+```{r}
+sanguchez <- sanguchez[!is.na(sanguchez$Precio),]
+sanguchez <- sanguchez[!is.na(sanguchez$nota),]
+
+escala_data_san = scale(sanguchez) %>% as_tibble()
+
+escala_data_san %>% summary()
+escala_data_san$Precio %>% as.numeric()
+escala_data_san$nota %>% as.integer()
+```
+
+
+## tenemos escalada la data_san, aplicaremos algoritomo de k media. probaremos k = 20
+```{r}
+modelo_kmeans <- kmeans(escala_data_san, centers = 10)
+modelo_kmeans2 <- kmeans(sanguchez, centers = 10)
+
+escala_data_san$Precio <- modelo_kmeans$cluster %>% as.factor()
+escala_data_san$nota <- modelo_kmeans2$cluster %>% as.factor()
+
+ggplot(escala_data_san, aes(Precio, nota)) + geom_point(alpha=0.5, show.legend = T) +
+  theme_bw()
+info_clus <- modelo_kmeans$centers
+info_clus2 <- modelo_kmeans2$centers
+```
+
+
+## Evolucion suma de cuadrados intra_cluster a medida que aumentamos el numero de k
+
+```{r}
+SSinterior <- numeric(30)
+for(k in 1:30){
+  modelo <- kmeans(escala_data_san, centers = k)
+  SSinterior[k] <- modelo$tot.withinss
+}
+
+plot(SSinterior)
+
+
+## inspeccion visual 
+#escala_data_san$clus <- as.numeric(escala_data_san$clus)
+#sanguchez$clus <- as.numeric(sanguchez$clus)
+
+# uso distancia euclidiana
+tempDist <- dist(escala_data_san) %>% as.matrix()
+
+#reordeno filas y columnas en base al cluster obtenido
+index <- sort(modelo_kmeans$cluster, index.return=TRUE)
+tempDist <- tempDist[index$ix,index$ix]
+rownames(tempDist) <- c(1:nrow(escala_data_san))
+colnames(tempDist) <- c(1:nrow(escala_data_san))
+
+image(tempDist)
+
+```
+
+## Estadistico de Hopkins
+
+```{r}
+#res <- get_clust_tendency(escala_data_san, n = 30, graph = FALSE)
+res2 <- get_clust_tendency(sanguchez, n = 30, graph = FALSE)
+
+#print(res)
+
+print(res2)
+```
+
+
+##Indice de Correlacion 
+```{r}
+#construyo matriz de correlacion ideal (cada entidad correlaciona 1 con su cluster)
+tempMatrix <- matrix(0, nrow = nrow(sanguchez), ncol = nrow(sanguchez))
+tempMatrix[which(index$x==1), which(index$x==1)]  <- 1
+tempMatrix[which(index$x==2), which(index$x==2)]  <- 1
+tempMatrix[which(index$x==3), which(index$x==3)]  <- 1
+tempMatrix[which(index$x==4), which(index$x==4)]  <- 1
+tempMatrix[which(index$x==5), which(index$x==5)]  <- 1
+tempMatrix[which(index$x==6), which(index$x==6)]  <- 1
+tempMatrix[which(index$x==7), which(index$x==7)]  <- 1
+tempMatrix[which(index$x==8), which(index$x==8)]  <- 1
+tempMatrix[which(index$x==9), which(index$x==9)]  <- 1
+tempMatrix[which(index$x==10), which(index$x==10)] <- 1
+
+
+
+#construyo matriz de disimilitud
+tempDist2 <- 1/(1+tempDist)
+
+
+#Calcula correlacion 
+cor <- cor(tempMatrix[upper.tri(tempMatrix)],tempDist2[upper.tri(tempDist2)])
+
+print(cor)
+
+
+```
+
+
+## Indice de Cohesion y el de separacion 
+
+```{r}
+escala_data_san <- apply(escala_data_san,2,as.numeric)
+ 
+#Cohesion
+withinCluster <- numeric(10)
+for (i in 1:10){
+  tempdata_ <- escala_data_san[which(modelo_kmeans$cluster == i),]
+  withinCluster[i] <- sum(dist2(tempdata_,colMeans(tempdata_))^2)
+}
+cohesion = sum(withinCluster)
+#es equivalente a model$tot.withinss en k-means
+print(c(cohesion, modelo_kmeans$tot.withinss))
+## [1] 2201.338 2201.338
+#Separation
+meandata_ <- colMeans(escala_data_san)
+SSB <- numeric(10)
+for (i in 1:10){
+  tempdata_ <- escala_data_san[which(modelo_kmeans$cluster==i),]
+  SSB[i] <- nrow(tempdata_)*sum((meandata_-colMeans(tempdata_))^2)
+}
+separation = sum(SSB)
+
+print(separation)
+```
+
+
+
+
+
+
+
+
+## COEFICIENTE DE SILUETA
+```{r}
+coefSil <- silhouette(modelo_kmeans$cluster,dist(escala_data_san))
+summary(coefSil)
+
+#visualizamos el codigo de silueta de cada cluster
+fviz_silhouette(coefSil) + coord_flip()
+```
+
+
+## Utilizamos el coeficiente de silueta para encontrar el mejor valor de K
+
+```{r}
+coefSil=numeric(30)
+for (k in 2:30){
+  modelo <- kmeans(escala_data_san, centers = k)
+  temp <- silhouette(modelo$cluster,dist(escala_data_san))
+  coefSil[k] <- mean(temp[,3])
+}
+tempDF=data.frame(CS=coefSil,K=c(1:30))
+
+ggplot(tempDF, aes(x=K, y=CS)) + 
+  geom_line() +
+  scale_x_continuous(breaks=c(1:30))
+
+
+```
+
